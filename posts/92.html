@@ -1,0 +1,44 @@
+<!DOCTYPE html><html lang="en"><head><title>Exploring Audio Files with Erlang</title><link rel="alternate" type="application/atom+xml" title="Atom feed" href="atom.xml"><meta name="viewport" content="width=device-width,initial-scale=1"><style>a,#p21{text-decoration:none}a:link{color:#00D}a:visited{color:purple}a:hover{text-decoration:underline}body,div{margin:0;padding:0;box-sizing:border-box}body{font:100%/1.5 verdana;color:#222}p,ul,blockquote,pre{margin:0 0 1em}ul{list-style:none;padding-left:1em;text-indent:-1em}h1,h2{font:700 1.27em verdana;margin:0 0 .5em}h1{color:#117}blockquote{font-style:italic}pre,code{font:700 1em "courier new",monospace}pre{overflow:auto}.box{margin:0 auto;padding:0 12px}.s{font:.91em/1.4 verdana}.ab a{display:block;margin:0 0 1em;padding-left:1em;text-indent:-1em}#top{background:#117;color:#FFF;margin:0 0 .67em;border:0 solid #7373D9;border-width:0 0 12px;padding:2em 0 0}#p21{font:700 2.5em georgia;color:#FFF}#perm{color:#222;background:#DDD;border:1px solid #BBB;padding:2px}@media screen and (min-width:768px){blockquote,pre{margin-left:1.25em}.box{max-width:840px}#c1{width:71%;float:left}#c2{width:26%;float:right}}</style></head><body><div id="top"><div class="box"><a id="p21" href="/">programming in&nbsp;the<br>twenty-first century</a><p>It's not about technology for its own sake. It's about being able to implement your ideas.</p></div></div><div class="box"><div id="c1"><h1>Exploring Audio Files with Erlang</h1><p>It takes surprisingly little Erlang code to dig into the contents of an uncompressed audio file. And it turns out that three of the most common uncompressed audio file formats--WAV, AIFF, and Apple's CAF--all follow the same general structure. Once you understand the basics of one, it's easy to deal with the others. AIFF is the trickiest of the three, so that's the one I'll use as an example.</p><p>First, load the entire file into a binary:</p><pre>load(Filename) -&gt;
+   {ok, B} = file:read_file(Filename),
+   B.</pre><p>There's a small header: four characters spelling out "FORM", a length which doesn't matter, then four more characters spelling out "AIFF". The interesting part is the rest of the file, so let's just validate the header and put the rest of the file into a binary called B:</p><pre>&lt;&lt;"FORM", _:32, "AIFF", B/binary&gt;&gt; = load(Filename).</pre><p>The "rest of file" binary is broken into chunks that follow a simple format: a four character chunk name, the length of the data in the chunk (which doesn't include the header), and then the data itself. Here's a little function that breaks a binary into a list of <code>{Chunk_Name, Contents}</code> pairs:</p><pre>chunkify(Binary) -&gt; chunkify(Binary, []).
+chunkify(&lt;&lt;N1,N2,N3,N4, Len:32,
+   Data:Len/binary, Rest/binary&gt;&gt;, Chunks) -&gt;
+   Name = list_to_atom([N1,N2,N3,N4]),
+   chunkify(adjust(Len, Rest), [{Name, Data}|Chunks]);
+chunkify(&lt;&lt;&gt;&gt;, Chunks) -&gt;
+   Chunks.</pre><p>Ignore the <code>adjust</code> function for now; I'll get back to that. </p><p>Given the results of <code>chunkify</code>, it's easy to find a specific chunk using <code>lists:keyfind/3</code>. Really, though, other than to test the chunkification code, there's rarely a reason to iterate through all the chunks in a file. It's nicer to return a function that makes lookups easy. Replace the last line of <code>chunkify</code> with this:</p><pre>fun(Name) -&gt;
+   element(2, lists:keyfind(Name, 1, Chunks)) end.</pre><p>The key info about sample rates and number of channels and all that is in a chunk called <code>COMM</code> and now we've got an easy way to get at and decode that chunk:</p><pre>Chunks = chunkify(B).
+&lt;&lt;Channels:16, Frames:32,
+  SampleSize:16,
+  Rate:10/binary&gt;&gt; = Chunks('COMM').</pre><p>The sound samples themselves are in a chunk called <code>SSND</code>. The first eight bytes of that chunk don't matter, so to decode that chunk it's just:</p><pre>&lt;&lt;_:8/binary, Samples/binary&gt;&gt; = Chunks('SSND').</pre><p>Okay, now the few weird bits of the AIFF format. First, if the size of a chunk is odd, then there's one extra pad byte following it. That's what the <code>adjust</code> function is for. It checks if a pad byte exists and removes it before decoding the rest of the binary. The second quirk is that the sample rate is encoded as a ten-byte extended floating point value, and most languages don't have support for them--including Erlang. There's an algorithm in the AIFF spec for encoding and decoding extended floats, and I translated it into Erlang.</p><p>Here's the complete code for the AIFF decoder:</p><pre>load_aiff(Filename) -&gt;
+   &lt;&lt;"FORM", _:32, "AIFF", B/binary&gt;&gt; = load(Filename),
+   Chunks = chunkify(B),
+   &lt;&lt;Channels:16, Frames:32, SampleSize:16, Rate:10/binary&gt;&gt; =
+      Chunks('COMM'),
+   &lt;&lt;_:8/binary, Samples/binary&gt;&gt; = Chunks('SSND'),
+   {Channels, Frames, SampleSize, ext_to_int(Rate), Samples}.
+
+chunkify(Binary) -&gt; chunkify(Binary, []).
+chunkify(&lt;&lt;N1,N2,N3,N4, Length:32,
+   Data:Length/binary, Rest/binary&gt;&gt;, Chunks) -&gt;
+   Name = list_to_atom([N1,N2,N3,N4]),
+   chunkify(adjust(Length, Rest), [{Name, Data}|Chunks]);
+chunkify(&lt;&lt;&gt;&gt;, Chunks) -&gt;
+   fun(Name) -&gt; element(2, lists:keyfind(Name, 1, Chunks)) end.
+
+adjust(Length, B) -&gt;
+   case Length band 1 of
+      1 -&gt; &lt;&lt;_:8, Rest/binary&gt;&gt; = B, Rest;
+      _ -&gt; B
+   end.
+
+ext_to_int(&lt;&lt;_, Exp, Mantissa:32, _:4/binary&gt;&gt;) -&gt;
+   ext_to_int(30 - Exp, Mantissa, 0).
+ext_to_int(0, Mantissa, Last) -&gt;
+   Mantissa + (Last band 1);
+ext_to_int(Exp, Mantissa, _Last) -&gt;
+   ext_to_int(Exp - 1, Mantissa bsr 1, Mantissa).
+
+load(Filename) -&gt;
+   {ok, B} = file:read_file(Filename),
+   B.</pre><p>WAV and CAF both follow the same general structure of a header followed by chunks. WAV uses little-endian values, while the other two are big-endian. CAF doesn't have chunk alignment requirements, so that removes the need for <code>adjust</code>. And fortunately it's only AIFF that requires that ugly conversion from extended floating point in order to get the sample rate.</p><p class="s"><a href="92.html" id="perm">permalink</a> <i>March 12, 2011</i></p><h1>previously</h1><ul><li><a href=91.html>Accidental Innovation, Part 3</a><li><a href=90.html>Accidental Innovation, Part 2</a><li><a href=89.html>Accidental Innovation, Part 1</a><li><a href=88.html>A Three-Year Retrospective</a><li><a href=87.html>Write Code Like You Just Learned How to Program</a></ul></div><div id="c2"><h1><a href="archives.html">archives</a></h1><p><b><a href="https://twitter.com/dadgumjames">twitter</a></b> / <b><a href="mailto:james.hague@gmail.com">mail</a></b></p><div class="s"><p>I'm James Hague, a <a href="56.html">recovering programmer</a> who has been designing video games since the 1980s. <a href="195.html">Programming Without Being Obsessed With Programming</a> and <a href="177.html">Organizational Skills Beat Algorithmic Wizardry</a> are good starting points. For the older stuff, try the <a href="162.html">2012 Retrospective</a>.</p><p>Where are <a href="57.html">the comments</a>?</p></div></div></div>

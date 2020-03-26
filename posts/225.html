@@ -1,0 +1,92 @@
+<!DOCTYPE html><html lang="en"><head><title>Picturing WebSocket Protocol Packets</title><link rel="alternate" type="application/atom+xml" title="Atom feed" href="atom.xml"><meta name="viewport" content="width=device-width,initial-scale=1"><style>a,#p21{text-decoration:none}a:link{color:#00D}a:visited{color:purple}a:hover{text-decoration:underline}body,div{margin:0;padding:0;box-sizing:border-box}body{font:100%/1.5 verdana;color:#222}p,ul,blockquote,pre{margin:0 0 1em}ul{list-style:none;padding-left:1em;text-indent:-1em}h1,h2{font:700 1.27em verdana;margin:0 0 .5em}h1{color:#117}blockquote{font-style:italic}pre,code{font:700 1em "courier new",monospace}pre{overflow:auto}.box{margin:0 auto;padding:0 12px}.s{font:.91em/1.4 verdana}.ab a{display:block;margin:0 0 1em;padding-left:1em;text-indent:-1em}#top{background:#117;color:#FFF;margin:0 0 .67em;border:0 solid #7373D9;border-width:0 0 12px;padding:2em 0 0}#p21{font:700 2.5em georgia;color:#FFF}#perm{color:#222;background:#DDD;border:1px solid #BBB;padding:2px}@media screen and (min-width:768px){blockquote,pre{margin-left:1.25em}.box{max-width:840px}#c1{width:71%;float:left}#c2{width:26%;float:right}}.packet{overflow:auto;white-space:nowrap;margin:0 0 .8em 0}
+@media screen and (min-width:768px){.packet{margin-left:1.25em}}
+.field{display:inline-block;font:18px verdana;text-align:center}
+.bits{margin:0 0 0 2px;padding:2px 4px 0 4px;font-size:75%;color:#888}
+.bar{background-color:#888;color:#fff;margin:0 0 0 2px;padding:4px}
+.b1{min-width:12px}
+.b3{}
+.b4{min-width:40px}
+.b7{min-width:56px}
+.b16{background-color:#bbb;min-width:96px}
+.b32{background-color:#bbb;min-width:144px}
+.b64{background-color:#bbb;min-width:180px}
+</style></head><body><div id="top"><div class="box"><a id="p21" href="/">programming in&nbsp;the<br>twenty-first century</a><p>It's not about technology for its own sake. It's about being able to implement your ideas.</p></div></div><div class="box"><div id="c1"><h1>Picturing WebSocket Protocol Packets</h1><p><i>(I'm using JavaScript in this article. If you're reading this via the news feed, go to the <a href="225.html">original version</a> to see the missing parts.)</i></p><p>I recently wrote a WebSocket server in Erlang. I've gotten fond of separating even desktop apps into two programs: one to handle the graphics and interface, and one for the core logic, and they communicate over a local socket. Any more it makes sense to use a browser for the first of these, with a WebSocket connecting it to an external program. The only WebSocket code I could find for Erlang needed existing web server packages, which is why I wrote my own.</p><p>The <a href="https://tools.ietf.org/html/rfc6455#section-5.4">WebSocket spec</a> contains this diagram to describe the messages between the client and server:</p><pre style="font-size:85%">
+ 0               1               2               3              
+ 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
++-+-+-+-+-------+-+-------------+-------------------------------+
+|F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+|I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+|N|V|V|V|       |S|             |   (if payload len==126/127)   |
+| |1|2|3|       |K|             |                               |
++-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+ 4               5               6               7              
++ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+|     Extended payload length continued, if payload len == 127  |
++ - - - - - - - - - - - - - - - +-------------------------------+
+ 8               9               10              11             
++ - - - - - - - - - - - - - - - +-------------------------------+
+|                               |Masking-key, if MASK set to 1  |
++-------------------------------+-------------------------------+
+ 12              13              14              15
++-------------------------------+-------------------------------+
+| Masking-key (continued)       |          Payload Data         |
++-------------------------------- - - - - - - - - - - - - - - - +
+:                     Payload Data continued ...                :
++ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+|                     Payload Data continued ...                |
++---------------------------------------------------------------+
+</pre><p>This is a confusing a diagram for a number of reasons. The ASCII art, for example, makes it hard to see which lines contain data and which are for byte numbers. When I first looked at it, it made me think there was more overhead than there actually is. That's unfortunate, because there's a simplicity to WebSocket protocol packets that's hard to extract from the above image, and that's what I want to demonstrate.</p><p>Here's the fixed part of the header, the 16-bits that are always present. This is followed by additional info, if needed, then the data itself. The number of bits is shown below each field. You should keep coming back to this for reference.</p><p class="packet"><i>[See the <a href="225.html">original</a> or enable JavaScript.]</i></p><p>F = 1 means this is a complete, self-contained packet. Assume it's always 1 for now. The main use of the opcode (Op) is to specify if the data is UTF-8 text or binary. M = 1 signals the data needs to be exclusive or-ed with a 32-bit mask. The length (Len) has three different encodings depending on much much data there is.</p><p>Messages to the server are required to have a mask, so here's what packets look like for each of the three length encodings.</p><p class="packet"><i>[See the <a href="225.html">original</a> or enable JavaScript.]</i></p><p>The first has a length of 60 bytes, the second 14,075, and the third 18,000,000. Special escape values for the 7 bit Len field indicate the presence of additional 16 or 64 bit length fields.</p><p>Packets from the server to the client don't use the mask, so the headers are shorter. Again, for the same three data lengths:</p><p class="packet"><i>[See the <a href="225.html">original</a> or enable JavaScript.]</i></p><p>The remaining part is what fragmented messages look like. The F bit is 1 only for the Final packet. The initial packet contains the opcode; the others have 0 in the opcode field.</p><p class="packet"><i>[See the <a href="225.html">original</a> or enable JavaScript.]</i></p><p>This message is 8256 bytes in total: two of 4096 bytes and one of 64. Notice how different length encodings are used, just like in the earlier examples.</p><p>(If you liked this, you might enjoy <a href="92.html">Exploring Audio Files with Erlang</a>.)
+</p><p class="s"><a href="225.html" id="perm">permalink</a> <i>November 14, 2016</i></p><h1>previously</h1><ul><li><a href=224.html>Being More Than "Just the Programmer"</a><li><a href=223.html>The New Minimalism</a><li><a href=222.html>Optimizing for Human Understanding</a><li><a href=221.html>Fun vs. Computer Science</a><li><a href=220.html>Evolution of an Erlang Style</a></ul></div><div id="c2"><h1><a href="archives.html">archives</a></h1><p><b><a href="https://twitter.com/dadgumjames">twitter</a></b> / <b><a href="mailto:james.hague@gmail.com">mail</a></b></p><div class="s"><p>I'm James Hague, a <a href="56.html">recovering programmer</a> who has been designing video games since the 1980s. <a href="195.html">Programming Without Being Obsessed With Programming</a> and <a href="177.html">Organizational Skills Beat Algorithmic Wizardry</a> are good starting points. For the older stuff, try the <a href="162.html">2012 Retrospective</a>.</p><p>Where are <a href="57.html">the comments</a>?</p></div></div></div><script>
+function div(className) {
+	var d = document.createElement('div');
+	d.className = className;
+	return d;
+}
+function bits(n, s) {
+	var d1 = div("field");
+	var d2 = div("bar b" + n);
+	var d3 = div("bits");
+	d2.appendChild(document.createTextNode(s));
+	d3.appendChild(document.createTextNode(n));
+	d1.appendChild(d2);
+	d1.appendChild(d3);
+	return d1;
+}
+function rawPacket(a) {
+	var d = div("packet");
+	for (var i = 0; i < a.length; i += 2) {
+		d.appendChild(bits(a[i], a[i+1]));
+	}
+	return d;
+}
+function packet(f, m, op, len) {
+	var a = [1, f, 3, "000", 4, op, 1, m];
+	if (len < 126) { 
+		a.push(7, len); 
+	} else if (len < 65536) { 
+		a.push(7, 126); 
+		a.push(16, len);
+	} else { 
+		a.push(7, 127); 
+		a.push(64, len);
+	} 
+	if (m == 1) a.push(32, "Mask"); 
+	return rawPacket(a);
+}
+var P = document.getElementsByClassName("packet");
+var D = [];
+for (var i = P.length - 1; i >= 0; i--) {
+ 	D[i] = div('');
+ 	P[i].parentNode.replaceChild(D[i], P[i]);
+}
+D[0].appendChild(rawPacket([1,"F",3,"000",4,"Op",1,"M",7,"Len"]));
+D[1].appendChild(packet(1,1,"Op",60));
+D[1].appendChild(packet(1,1,"Op",14075));
+D[1].appendChild(packet(1,1,"Op",18000000));
+D[2].appendChild(packet(1,0,"Op",60));
+D[2].appendChild(packet(1,0,"Op",14075));
+D[2].appendChild(packet(1, 0, "Op", 18000000));
+D[3].appendChild(packet(0, 0, "Op", 4096));
+D[3].appendChild(packet(0, 0, 0, 4096));
+D[3].appendChild(packet(1, 0, 0, 64));
+</script>
