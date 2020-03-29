@@ -2,11 +2,8 @@ const { stat } = Deno;
 import { readFileStr, exists } from "std/fs/mod.ts";
 import * as wiki from "seran/wiki.ts";
 
-export let metaPages = {};
-
-function route(url, fn) {
-  metaPages[url] = fn;
-}
+export let handler = new wiki.Handler();
+let files = []
 
 async function readdir(path) {
   let fileInfo = await stat(path);
@@ -18,12 +15,9 @@ async function readdir(path) {
   return await Deno.readdir(path);
 }
 
-route("/welcome-visitors.json", async (req, _system) => {
-  wiki.serveJson(req, wiki.welcomePage("[[DenoWiki]]", "[[Analysis]]"));
-});
+handler.page(wiki.welcomePage("[[DenoWiki]]", "[[Analysis]]"))
 
-route("/analysis.json", async (req, _system) => {
-  let items = [
+handler.items("Analysis", () => [
     `Files: ${files.length}`,
     '[[File Size]]',
     '[[IDs]]',
@@ -33,49 +27,28 @@ route("/analysis.json", async (req, _system) => {
     'Find and render the plain text portions',
     'Find and render code snippets',
     'Methodically ask, what are we missing?'
-  ]
-  wiki.serveJson(req, wiki.page("Analysis", items.map((i) => wiki.paragraph(i))));
+  ].map((i) => wiki.paragraph(i)));
+
+handler.items("File Size", () => files.map((f) => wiki.paragraph(`${f.name} - ${f.len}`)));
+
+function fileContents() {
+  return files.map(async (f) => await readFileStr("../seran-prog21/posts/" + f.name))
+}
+
+handler.items("IDs", () => {
+  return Promise.all(fileContents().map(async (c) => {
+    let matches = (await c).matchAll(/id="(.*?)"/g)
+    return wiki.paragraph(Array.from(matches).map((m) => m[1]).join(", "))
+  }))
 });
 
-route("/file-size.json", async (req, _system) => {
-  let items = []
-  for (let file of files) {
-    items.push(wiki.paragraph(`${file.name} - ${file.len}`))
-  }
-  wiki.serveJson(req, wiki.page("File Size", items));
+handler.items("Titles", () => {
+  return Promise.all(fileContents().map(async (c) => {
+    let match = (await c).match(/h1>(.*?)</)
+    return wiki.paragraph(match[1])
+  }))
 });
 
-route("/ids.json", async (req, _system) => {
-  let items = []
-  for (let file of files) {
-    let contents = await readFileStr("../seran-prog21/posts/" + file.name)
-    let matches = contents.matchAll(/id="(.*?)"/g)
-    let ids = []
-    for (let match of matches) {
-      ids.push(match[1])
-    }
-    items.push(wiki.paragraph(ids.join(", ")))
-  }
-  wiki.serveJson(req, wiki.page("IDs", items));
-});
-
-route("/titles.json", async (req, _system) => {
-  let items = []
-  for (let file of files) {
-    let contents = await readFileStr("../seran-prog21/posts/" + file.name)
-    let match = contents.match(/h1>(.*?)</)
-    items.push(wiki.paragraph(match[1]))
-  }
-  wiki.serveJson(req, wiki.page("IDs", items));
-});
-
-let files = []
 export async function init() {
   files = await readdir("../seran-prog21/posts")
-  let items = []
-  for (let file of files) {
-    let contents = await readFileStr("../seran-prog21/posts/" + file.name)
-    let match = contents.match(/h1>(.*?)</)
-    items.push(wiki.paragraph(match[1]))
-  }
 }
