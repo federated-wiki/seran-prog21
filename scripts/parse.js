@@ -11,7 +11,10 @@ for (let file of Deno.args) {
   let tokens = scan(html)
   let root = tokens.shift()
   let tree = parse(root,tokens)
-  console.log(file, JSON.stringify(tree,null,2))
+  findall(/<title>/, tree, print)
+  findall(/<div id="c1">/, tree, c1 => {
+    findall(/<pre>|<p>/, c1, print)
+  })
 }
 
 function scan(html) {
@@ -37,4 +40,23 @@ function parse(tag, tokens) {
     } 
   }
   return node
+}
+
+function findall(pat, tree, more) {
+  if (pat.exec(tree.tag)) {
+    more(tree)
+  } else {
+    (tree.text||[]).find(each => findall(pat, each, more))
+  }
+}
+
+function flatten(node) {
+  if (typeof node === 'string') return node
+  return (node.text||[]).map(n => flatten(n)).join('')
+}
+
+function print(node) {
+  console.log(node.tag)
+  console.log(flatten(node))
+  console.log()
 }
